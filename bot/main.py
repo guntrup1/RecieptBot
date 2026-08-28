@@ -94,6 +94,11 @@ async def health_check(request):
 
 async def run_bot_and_server():
     from aiohttp import web
+    
+    # Initialize DB in the same event loop as the bot!
+    await init_db()
+    logger.info("✅ Database initialised")
+
     app = get_bot_app()
     
     await app.initialize()
@@ -118,9 +123,6 @@ async def run_bot_and_server():
 if __name__ == "__main__":
     if os.name == "nt":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
-    asyncio.run(init_db())
-    logger.info("✅ Database initialised")
     
     try:
         asyncio.run(run_bot_and_server())
