@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        ["📸 Добавить чек", "📸 Добавить чеки (Пачкой)"],
+        ["📸 Добавить чек"],
         ["📋 История чеков", "💰 Бюджет на месяц"],
         ["⚙️ Настройки"],
     ],

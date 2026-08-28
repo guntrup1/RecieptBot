@@ -59,7 +59,6 @@ def get_bot_app():
 
     # ── Receipt conversations (highest priority) ──
     app.add_handler(build_receipt_conversation(), group=0)
-    app.add_handler(build_batch_conversation(), group=0)
 
     # ── Budget conversation ──
     app.add_handler(build_budget_conversation(), group=1)
