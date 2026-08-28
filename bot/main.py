@@ -39,7 +39,8 @@ async def _post_init(app: Application) -> None:
     logger.info("✅ Database initialised")
 
 
-def main() -> None:
+def get_bot_app():
+    """Builds and configures the Telegram Bot application."""
     if not BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in .env")
 
@@ -82,9 +83,44 @@ def main() -> None:
     for handler in get_history_callback_handlers():
         app.add_handler(handler, group=4)
 
-    logger.info("🤖 ReceiptBot is running…")
-    app.run_polling(drop_pending_updates=True)
+    return app
 
+async def health_check(request):
+    """Dummy web server response to keep Render happy."""
+    from aiohttp import web
+    return web.Response(text="ReceiptBot is running!")
+
+async def run_bot_and_server():
+    from aiohttp import web
+    app = get_bot_app()
+    
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    logger.info("🤖 ReceiptBot is running…")
+
+    # Start dummy web server
+    webapp = web.Application()
+    webapp.add_routes([web.get('/', health_check)])
+    runner = web.AppRunner(webapp)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 8000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"🌐 Dummy web server listening on port {port}")
+
+    # Run forever
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    if os.name == "nt":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    
+    asyncio.run(init_db())
+    logger.info("✅ Database initialised")
+    
+    try:
+        asyncio.run(run_bot_and_server())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped.")
