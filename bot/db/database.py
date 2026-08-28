@@ -141,7 +141,7 @@ async def _fetchone(query: str, *args):
     if USE_POSTGRES:
         pool = await _get_pool()
         async with pool.acquire() as conn:
-            return await conn.fetchrow(query.replace("?", "$%d" % (i+1) for i, _ in enumerate(args)) if False else _pg_query(query), *args)
+            return await conn.fetchrow(_pg_query(query), *args)
     else:
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(query, args) as cur:
