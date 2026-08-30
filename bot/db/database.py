@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS debt_ledger (
     description      TEXT,
     month            TEXT NOT NULL,
     created_at       TIMESTAMP DEFAULT NOW(),
-    receipt_id       INTEGER REFERENCES receipts(id) ON DELETE CASCADE
+    receipt_id       INTEGER REFERENCES receipts(id) ON DELETE SET NULL
 );
 """
 
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS debt_ledger (
     month            TEXT NOT NULL,
     created_at       TEXT DEFAULT (datetime('now')),
     receipt_id       INTEGER,
-    FOREIGN KEY (receipt_id) REFERENCES receipts (id) ON DELETE CASCADE
+    FOREIGN KEY (receipt_id) REFERENCES receipts (id) ON DELETE SET NULL
 );
 """
 

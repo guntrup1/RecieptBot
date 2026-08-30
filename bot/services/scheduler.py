@@ -44,14 +44,11 @@ async def send_monthly_summary(bot):
         logger.error(f"Failed to send monthly summary: {e}")
 
 def start_scheduler(bot):
-    # Defaulting to Moscow time (UTC+3) which matches "5 часов вечера" for most Russian/Cyprus users.
+    # Defaulting to Moscow time (UTC+3)
     tz = pytz.timezone("Europe/Moscow")
     scheduler = AsyncIOScheduler(timezone=tz)
     
-    # 1. Daily cleanup at 03:00 AM
-    scheduler.add_job(run_cleanup, CronTrigger(hour=3, minute=0, timezone=tz))
-    
-    # 2. Monthly summary on the last day of the month at 17:00
+    # Monthly summary on the last day of the month at 17:00
     scheduler.add_job(send_monthly_summary, CronTrigger(day="last", hour=17, minute=0, timezone=tz), args=[bot])
     
     scheduler.start()
