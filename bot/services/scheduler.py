@@ -48,7 +48,10 @@ def start_scheduler(bot):
     tz = pytz.timezone("Europe/Moscow")
     scheduler = AsyncIOScheduler(timezone=tz)
     
-    # Monthly summary on the last day of the month at 17:00
+    # 1. Daily cleanup of old photos at 03:00 AM
+    scheduler.add_job(run_cleanup, CronTrigger(hour=3, minute=0, timezone=tz))
+    
+    # 2. Monthly summary on the last day of the month at 17:00
     scheduler.add_job(send_monthly_summary, CronTrigger(day="last", hour=17, minute=0, timezone=tz), args=[bot])
     
     scheduler.start()

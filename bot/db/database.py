@@ -367,20 +367,18 @@ async def get_debt_history(month: str, limit: int = 15) -> list[tuple]:
 # ─── Cleanup ──────────────────────────────────────────────────────────────────
 
 async def cleanup_old_data() -> int:
-    """Deletes receipts older than 2 months and returns the number of deleted records."""
+    """Clears photo_file_id from receipts older than 2 months, keeping the text data."""
     if USE_POSTGRES:
         pool = await _get_pool()
         async with pool.acquire() as conn:
-            # Delete receipts (CASCADE will handle receipt_items, personal_expenses, and debt_ledger linked to receipt_id)
-            res = await conn.execute("DELETE FROM receipts WHERE created_at < NOW() - INTERVAL '2 months'")
-            # Parse 'DELETE N'
-            return int(res.split()[1]) if res.startswith("DELETE") else 0
+            res = await conn.execute("UPDATE receipts SET photo_file_id = NULL WHERE created_at < NOW() - INTERVAL '2 months' AND photo_file_id IS NOT NULL")
+            return int(res.split()[1]) if res.startswith("UPDATE") else 0
     else:
         async with aiosqlite.connect(DB_PATH) as db:
-            cur = await db.execute("DELETE FROM receipts WHERE created_at < date('now', '-2 months')")
-            deleted = cur.rowcount
+            cur = await db.execute("UPDATE receipts SET photo_file_id = NULL WHERE created_at < date('now', '-2 months') AND photo_file_id IS NOT NULL")
+            updated = cur.rowcount
             await db.commit()
-            return deleted
+            return updated
 
 # ─── Receipt Fetching ─────────────────────────────────────────────────────────
 
