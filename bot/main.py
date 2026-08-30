@@ -27,7 +27,11 @@ from bot.handlers.history import get_history_callback_handlers, show_history
 from bot.handlers.menu import start
 from bot.handlers.receipt import build_receipt_conversation
 from bot.handlers.settings import show_settings, build_settings_conversation
-from bot.handlers.batch import build_batch_conversation
+from bot.handlers.debts import (
+    show_debts_main_menu,
+    build_repay_conversation,
+    get_debts_callback_handlers,
+)
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s — %(message)s",
@@ -62,6 +66,9 @@ def get_bot_app():
 
     # ── Budget conversation ──
     app.add_handler(build_budget_conversation(), group=1)
+    
+    # ── Debts conversation ──
+    app.add_handler(build_repay_conversation(), group=1)
 
     # ── Simple menu button handlers ──
     app.add_handler(
@@ -70,6 +77,10 @@ def get_bot_app():
     )
     app.add_handler(
         MessageHandler(filters.Regex(r"^📋 История чеков$"), show_history),
+        group=2,
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^💸 Долги$"), show_debts_main_menu),
         group=2,
     )
     app.add_handler(
@@ -83,6 +94,9 @@ def get_bot_app():
     # ── Inline callback: receipt detail & delete ──
     for handler in get_history_callback_handlers():
         app.add_handler(handler, group=4)
+        
+    for handler in get_debts_callback_handlers():
+        app.add_handler(handler, group=4)
 
     return app
 
@@ -93,6 +107,7 @@ async def health_check(request):
 
 async def run_bot_and_server():
     from aiohttp import web
+    from bot.services.scheduler import start_scheduler
     
     # Initialize DB in the same event loop as the bot!
     await init_db()
@@ -104,6 +119,9 @@ async def run_bot_and_server():
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
     logger.info("🤖 ReceiptBot is running…")
+    
+    # Start background scheduler
+    start_scheduler(app.bot)
 
     # Start dummy web server
     webapp = web.Application()

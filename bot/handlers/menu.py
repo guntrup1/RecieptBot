@@ -7,7 +7,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         ["📸 Добавить чек"],
         ["📋 История чеков", "💰 Бюджет на месяц"],
-        ["⚙️ Настройки"],
+        ["💸 Долги", "⚙️ Настройки"],
     ],
     resize_keyboard=True,
     is_persistent=True,

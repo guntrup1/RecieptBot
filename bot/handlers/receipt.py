@@ -196,7 +196,7 @@ async def _finalise(
     )
     await save_receipt_items(receipt_id, receipt_data.get("items", []))
     if personal_expenses:
-        await save_personal_expenses(receipt_id, personal_expenses)
+        await save_personal_expenses(receipt_id, personal_expenses, month)
 
     # Send to Telegram channel
     channel_id = await get_setting("channel_id")

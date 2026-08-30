@@ -25,36 +25,64 @@ def _month_display(month: str) -> str:
 
 # ─── Receipt list ─────────────────────────────────────────────────────────────
 
-async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    month    = _current_month()
-    receipts = await get_month_receipts(month)
+RECEIPTS_PER_PAGE = 5
 
+async def send_history_page(query_or_message, page: int, month: str):
+    receipts = await get_month_receipts(month)
     if not receipts:
-        await update.message.reply_text(
-            f"📋 Нет чеков за {_month_display(month)}."
-        )
+        text = f"📋 Нет чеков за {_month_display(month)}."
+        if hasattr(query_or_message, "edit_message_text"):
+            await query_or_message.edit_message_text(text)
+        else:
+            await query_or_message.reply_text(text)
         return
 
+    total_month = sum(float(r[3] or 0) for r in receipts)
+    total_pages = max(1, (len(receipts) + RECEIPTS_PER_PAGE - 1) // RECEIPTS_PER_PAGE)
+    
+    if page < 0: page = 0
+    if page >= total_pages: page = total_pages - 1
+    
+    start_idx = page * RECEIPTS_PER_PAGE
+    end_idx = start_idx + RECEIPTS_PER_PAGE
+    page_receipts = receipts[start_idx:end_idx]
+    
     buttons = []
-    total_month = 0.0
-    for row in receipts:
+    for row in page_receipts:
         rid, date, store, amount = row
-        total_month += float(amount or 0)
         label = f"{date or '?'} — {store or 'Unknown'}: {float(amount or 0):.2f} {CURRENCY}"
         buttons.append([InlineKeyboardButton(label, callback_data=f"receipt_detail:{rid}")])
-
+        
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"history_page:{page-1}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Вперед ➡️", callback_data=f"history_page:{page+1}"))
+        
+    if nav_row:
+        buttons.append(nav_row)
+        
     text = (
         f"📋 <b>История чеков — {_month_display(month)}</b>\n\n"
-        f"Чеков: <b>{len(receipts)}</b>\n"
-        f"Итого потрачено: <b>{total_month:.2f} {CURRENCY}</b>\n\n"
+        f"Всего чеков: <b>{len(receipts)}</b>\n"
+        f"Итого потрачено: <b>{total_month:.2f} {CURRENCY}</b>\n"
+        f"Страница: <b>{page+1} из {total_pages}</b>\n\n"
         "Нажмите на чек, чтобы посмотреть детали:"
     )
+    
+    if hasattr(query_or_message, "edit_message_text"):
+        await query_or_message.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await query_or_message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
 
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
+async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_history_page(update.message, 0, _current_month())
+
+async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.split(":")[1])
+    await send_history_page(query, page, _current_month())
 
 # ─── Receipt detail ───────────────────────────────────────────────────────────
 
@@ -119,4 +147,5 @@ def get_history_callback_handlers() -> list:
     return [
         CallbackQueryHandler(show_receipt_detail, pattern=r"^receipt_detail:\d+$"),
         CallbackQueryHandler(delete_receipt_callback, pattern=r"^delete_receipt:\d+$"),
+        CallbackQueryHandler(history_page_callback, pattern=r"^history_page:\d+$"),
     ]

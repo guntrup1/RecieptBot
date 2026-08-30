@@ -64,6 +64,17 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS debt_ledger (
+    id               SERIAL PRIMARY KEY,
+    person_name      TEXT NOT NULL,
+    amount           REAL NOT NULL,
+    transaction_type TEXT NOT NULL,
+    description      TEXT,
+    month            TEXT NOT NULL,
+    created_at       TIMESTAMP DEFAULT NOW(),
+    receipt_id       INTEGER REFERENCES receipts(id) ON DELETE CASCADE
+);
 """
 
 SCHEMA_SQLITE = """
@@ -106,6 +117,18 @@ CREATE TABLE IF NOT EXISTS personal_expenses (
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS debt_ledger (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_name      TEXT NOT NULL,
+    amount           REAL NOT NULL,
+    transaction_type TEXT NOT NULL,
+    description      TEXT,
+    month            TEXT NOT NULL,
+    created_at       TEXT DEFAULT (datetime('now')),
+    receipt_id       INTEGER,
+    FOREIGN KEY (receipt_id) REFERENCES receipts (id) ON DELETE CASCADE
 );
 """
 
@@ -279,27 +302,91 @@ async def save_receipt_items(receipt_id: int, items: list[dict]) -> None:
                 )
             await db.commit()
 
-async def save_personal_expenses(receipt_id: int, expenses: list[dict]) -> None:
+async def save_personal_expenses(receipt_id: int, expenses: list[dict], month: str) -> None:
     if USE_POSTGRES:
         pool = await _get_pool()
         async with pool.acquire() as conn:
             for exp in expenses:
+                person = exp.get("person", "")
+                item_name = exp.get("item", "")
+                amount = float(exp.get("amount", 0))
+                # 1. Save to personal_expenses
                 await conn.execute(
                     "INSERT INTO personal_expenses (receipt_id, person_name, item_name, amount) VALUES ($1, $2, $3, $4)",
-                    receipt_id, exp.get("person", ""), exp.get("item", ""), exp.get("amount", 0),
+                    receipt_id, person, item_name, amount,
+                )
+                # 2. Add to debt_ledger
+                await conn.execute(
+                    "INSERT INTO debt_ledger (person_name, amount, transaction_type, description, month, receipt_id) VALUES ($1, $2, $3, $4, $5, $6)",
+                    person, amount, "expense", f"Покупка: {item_name}", month, receipt_id
                 )
     else:
         async with aiosqlite.connect(DB_PATH) as db:
             for exp in expenses:
+                person = exp.get("person", "")
+                item_name = exp.get("item", "")
+                amount = float(exp.get("amount", 0))
                 await db.execute(
                     "INSERT INTO personal_expenses (receipt_id, person_name, item_name, amount) VALUES (?, ?, ?, ?)",
-                    (receipt_id, exp.get("person", ""), exp.get("item", ""), exp.get("amount", 0)),
+                    (receipt_id, person, item_name, amount),
+                )
+                await db.execute(
+                    "INSERT INTO debt_ledger (person_name, amount, transaction_type, description, month, receipt_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    (person, amount, "expense", f"Покупка: {item_name}", month, receipt_id),
                 )
             await db.commit()
 
+# ─── Debts & Ledger ───────────────────────────────────────────────────────────
+
+async def add_debt_repayment(person_name: str, amount: float, month: str, description: str = "Погашение долга") -> None:
+    """Adds a repayment entry (negative amount) to the ledger."""
+    await _execute(
+        "INSERT INTO debt_ledger (person_name, amount, transaction_type, description, month) VALUES (?, ?, ?, ?, ?)",
+        person_name, -amount, "repayment", description, month
+    )
+
+async def delete_ledger_entry(entry_id: int) -> None:
+    await _execute("DELETE FROM debt_ledger WHERE id = ?", entry_id)
+
+async def get_debts_for_month(month: str) -> dict[str, float]:
+    """Returns a dict of {person_name: total_debt} for the given month."""
+    rows = await _fetchall(
+        "SELECT person_name, SUM(amount) FROM debt_ledger WHERE month = ? GROUP BY person_name",
+        month
+    )
+    return {row[0]: float(row[1]) for row in rows}
+
+async def get_debt_history(month: str, limit: int = 15) -> list[tuple]:
+    """Returns recent ledger entries for the month."""
+    rows = await _fetchall(
+        "SELECT id, person_name, amount, transaction_type, description, created_at FROM debt_ledger WHERE month = ? ORDER BY created_at DESC LIMIT ?",
+        month, limit
+    )
+    return [tuple(r) for r in rows]
+
+# ─── Cleanup ──────────────────────────────────────────────────────────────────
+
+async def cleanup_old_data() -> int:
+    """Deletes receipts older than 2 months and returns the number of deleted records."""
+    if USE_POSTGRES:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            # Delete receipts (CASCADE will handle receipt_items, personal_expenses, and debt_ledger linked to receipt_id)
+            res = await conn.execute("DELETE FROM receipts WHERE created_at < NOW() - INTERVAL '2 months'")
+            # Parse 'DELETE N'
+            return int(res.split()[1]) if res.startswith("DELETE") else 0
+    else:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cur = await db.execute("DELETE FROM receipts WHERE created_at < date('now', '-2 months')")
+            deleted = cur.rowcount
+            await db.commit()
+            return deleted
+
+# ─── Receipt Fetching ─────────────────────────────────────────────────────────
+
 async def get_month_receipts(month: str) -> list[tuple]:
     rows = await _fetchall(
-        "SELECT id, date, store, total_amount FROM receipts WHERE month = ? ORDER BY date ASC, created_at ASC",
+        "SELECT id, date, store, total_amount FROM receipts WHERE month = ? ORDER BY date DESC, created_at DESC",
         month,
     )
     return [tuple(r) for r in rows]
