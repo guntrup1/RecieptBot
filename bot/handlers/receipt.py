@@ -88,6 +88,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     # Store for next step
     context.user_data["receipt_data"] = receipt_data
     context.user_data["photo_file_id"] = photo.file_id
+    context.user_data["receipt_caption"] = update.message.caption or ""
 
     store   = receipt_data.get("store", "Unknown")
     total   = receipt_data.get("total", 0)
@@ -115,6 +116,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     receipt_data  = context.user_data.get("receipt_data", {})
     photo_file_id = context.user_data.get("photo_file_id")
+    caption       = context.user_data.get("receipt_caption", "")
 
     # Download voice file (.ogg)
     voice_tg_file = await context.bot.get_file(update.message.voice.file_id)
@@ -124,20 +126,44 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await voice_tg_file.download_to_drive(tmp_path)
 
     try:
-        voice_result   = await analyse_voice(tmp_path, receipt_data)
+        voice_result   = await analyse_voice(tmp_path, receipt_data, caption=caption)
         personal_exps  = voice_result.get("personal_expenses", [])
         transcription  = voice_result.get("transcription", "")
+        comment        = voice_result.get("comment", "")
         logger.info("Personal expenses extracted: %s", personal_exps)
     except Exception as exc:
         logger.exception("Voice analysis failed")
         await msg.edit_text(f"⚠️ Не удалось обработать голосовое: {exc}\nОтчёт будет без деталей.")
         personal_exps = []
-        transcription = ""
+        comment = ""
     finally:
         os.unlink(tmp_path)
 
     await msg.edit_text("📊 Формирую отчёт...")
-    await _finalise(update, context, receipt_data, photo_file_id, personal_exps)
+    await _finalise(update, context, receipt_data, photo_file_id, personal_exps, comment=comment)
+    return ConversationHandler.END
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    msg = await update.message.reply_text("📝 Обрабатываю текст...")
+
+    receipt_data  = context.user_data.get("receipt_data", {})
+    photo_file_id = context.user_data.get("photo_file_id")
+    caption       = context.user_data.get("receipt_caption", "")
+    text_message  = update.message.text
+
+    try:
+        voice_result   = await analyse_voice(text_message, receipt_data, is_transcription=True, caption=caption)
+        personal_exps  = voice_result.get("personal_expenses", [])
+        comment        = voice_result.get("comment", "")
+        logger.info("Personal expenses extracted from text: %s", personal_exps)
+    except Exception as exc:
+        logger.exception("Text analysis failed")
+        await msg.edit_text(f"⚠️ Не удалось обработать текст: {exc}\nОтчёт будет без деталей.")
+        personal_exps = []
+        comment = ""
+
+    await msg.edit_text("📊 Формирую отчёт...")
+    await _finalise(update, context, receipt_data, photo_file_id, personal_exps, comment=comment)
     return ConversationHandler.END
 
 # ─── Step 2b: skip voice ─────────────────────────────────────────────────────
@@ -149,8 +175,21 @@ async def skip_voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     receipt_data  = context.user_data.get("receipt_data", {})
     photo_file_id = context.user_data.get("photo_file_id")
+    caption       = context.user_data.get("receipt_caption", "")
+    
+    comment = ""
+    if caption:
+        # If there's a caption, analyse it for a comment or personal expenses
+        try:
+            voice_result   = await analyse_voice(caption, receipt_data, is_transcription=True, caption=caption)
+            personal_exps  = voice_result.get("personal_expenses", [])
+            comment        = voice_result.get("comment", "")
+        except Exception:
+            personal_exps = []
+    else:
+        personal_exps = []
 
-    await _finalise(query, context, receipt_data, photo_file_id, [])
+    await _finalise(query, context, receipt_data, photo_file_id, personal_exps, comment=comment)
     return ConversationHandler.END
 
 # ─── Cancel ───────────────────────────────────────────────────────────────────
@@ -177,12 +216,16 @@ async def _finalise(
     photo_file_id: str,
     personal_expenses: list[dict],
     batch_mode: bool = False,
+    comment: str = "",
 ) -> None:
     month = _current_month()
 
     budget        = await get_budget(month)
     spent_before  = await get_month_spent(month)
     report_text   = build_report(receipt_data, personal_expenses, budget, spent_before)
+    
+    if comment:
+        report_text += f"\n\n💬 <b>Комментарий:</b>\n{comment}"
 
     # Persist to DB
     receipt_id = await save_receipt(
@@ -193,6 +236,7 @@ async def _finalise(
         report_text   = report_text,
         month         = month,
         receipt_hash  = receipt_data.get("receipt_hash", ""),
+        comment       = comment,
     )
     await save_receipt_items(receipt_id, receipt_data.get("items", []))
     if personal_expenses:
@@ -246,6 +290,7 @@ def build_receipt_conversation() -> ConversationHandler:
             ],
             WAIT_VOICE_OR_SKIP: [
                 MessageHandler(filters.VOICE, handle_voice),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
                 CallbackQueryHandler(skip_voice_callback, pattern="^skip_voice$"),
             ],
         },

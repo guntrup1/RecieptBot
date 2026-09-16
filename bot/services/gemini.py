@@ -113,7 +113,7 @@ def _transcribe_voice_sync(audio_path: str) -> str:
     return transcription_obj.text.strip()
 
 @_with_retries
-def _analyse_voice_sync(audio_path_or_transcription: str, receipt_data: dict, is_transcription: bool = False) -> dict:
+def _analyse_voice_sync(audio_path_or_transcription: str, receipt_data: dict, is_transcription: bool = False, caption: str = "") -> dict:
     if is_transcription:
         transcription = audio_path_or_transcription
     else:
@@ -124,28 +124,28 @@ def _analyse_voice_sync(audio_path_or_transcription: str, receipt_data: dict, is
     receipt_json = json.dumps(receipt_data, ensure_ascii=False)
     
     prompt = f"""
-You are analysing a voice-note transcription about a shared grocery budget.
+You are analysing a voice-note transcription (or text message) and a photo caption about a shared grocery budget.
 The two people sharing the budget are: {PERSON_1} and {PERSON_2}.
 
 Receipt data (JSON):
 {receipt_json}
 
-Voice message transcription (General rules for multiple receipts, or specific to this one):
-"{transcription}"
+Photo Caption: "{caption}"
+Message/Transcription: "{transcription}"
 
 Task:
-1. Read the transcription carefully.
-2. Identify which items from THIS SPECIFIC receipt were PERSONAL purchases (not shared).
-3. Determine who bought them ({PERSON_1} or {PERSON_2}) and how much they cost.
+1. Identify which items from THIS SPECIFIC receipt were PERSONAL purchases (not shared).
+2. Determine who bought them ({PERSON_1} or {PERSON_2}) and how much they cost.
+3. Identify if the user left a general comment about the receipt.
 
 Return ONLY valid JSON format:
 {{
   "personal_expenses": [
-    {{"person": "{PERSON_1}", "item": "item name", "amount": 0.00}},
-    {{"person": "{PERSON_2}", "item": "item name", "amount": 0.00}}
-  ]
+    {{"person": "{PERSON_1}", "item": "item name", "amount": 0.00}}
+  ],
+  "comment": "Any general text comment the user left about the receipt (otherwise empty string)"
 }}
-If no personal purchases apply to this receipt, return: {{"personal_expenses": []}}
+If no personal purchases apply, return an empty array for personal_expenses.
 """
     
     analyse_response = model.generate_content([prompt])
@@ -154,6 +154,7 @@ If no personal purchases apply to this receipt, return: {{"personal_expenses": [
     return {
         "transcription": transcription,
         "personal_expenses": result.get("personal_expenses", []),
+        "comment": result.get("comment", ""),
     }
 
 # ─── Public async API ─────────────────────────────────────────────────────────
@@ -168,7 +169,7 @@ async def transcribe_voice(audio_path: str) -> str:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_executor, _transcribe_voice_sync, audio_path)
 
-async def analyse_voice(audio_path_or_transcription: str, receipt_data: dict, is_transcription: bool = False) -> dict:
+async def analyse_voice(audio_path_or_transcription: str, receipt_data: dict, is_transcription: bool = False, caption: str = "") -> dict:
     """Extract personal expenses via Gemini (transcribes first if not already done)."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_executor, _analyse_voice_sync, audio_path_or_transcription, receipt_data, is_transcription)
+    return await loop.run_in_executor(_executor, _analyse_voice_sync, audio_path_or_transcription, receipt_data, is_transcription, caption)

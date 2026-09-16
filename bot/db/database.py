@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     report_text   TEXT,
     month         TEXT,
     created_at    TIMESTAMP DEFAULT NOW(),
-    receipt_hash  TEXT
+    receipt_hash  TEXT,
+    comment       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS receipt_items (
@@ -73,7 +74,7 @@ CREATE TABLE IF NOT EXISTS debt_ledger (
     description      TEXT,
     month            TEXT NOT NULL,
     created_at       TIMESTAMP DEFAULT NOW(),
-    receipt_id       INTEGER REFERENCES receipts(id) ON DELETE SET NULL
+    receipt_id       INTEGER REFERENCES receipts(id) ON DELETE CASCADE
 );
 """
 
@@ -93,7 +94,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     report_text   TEXT,
     month         TEXT,
     created_at    TEXT    DEFAULT (datetime('now')),
-    receipt_hash  TEXT
+    receipt_hash  TEXT,
+    comment       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS receipt_items (
@@ -128,7 +130,7 @@ CREATE TABLE IF NOT EXISTS debt_ledger (
     month            TEXT NOT NULL,
     created_at       TEXT DEFAULT (datetime('now')),
     receipt_id       INTEGER,
-    FOREIGN KEY (receipt_id) REFERENCES receipts (id) ON DELETE SET NULL
+    FOREIGN KEY (receipt_id) REFERENCES receipts (id) ON DELETE CASCADE
 );
 """
 
@@ -154,6 +156,10 @@ async def init_db() -> None:
             await db.executescript(SCHEMA_SQLITE)
             try:
                 await db.execute("ALTER TABLE receipts ADD COLUMN receipt_hash TEXT")
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE receipts ADD COLUMN comment TEXT")
             except Exception:
                 pass
             await db.commit()
@@ -259,8 +265,16 @@ async def set_budget(month: str, amount: float) -> None:
             await db.commit()
 
 async def get_month_spent(month: str) -> float:
-    row = await _fetchone("SELECT COALESCE(SUM(total_amount), 0) FROM receipts WHERE month = ?", month)
-    return float(row[0]) if row else 0.0
+    # 1. Total spent from receipts
+    row1 = await _fetchone("SELECT COALESCE(SUM(total_amount), 0) FROM receipts WHERE month = ?", month)
+    receipt_total = float(row1[0]) if row1 else 0.0
+    
+    # 2. Total returned from debt repayments (these are stored as negative numbers in amount)
+    row2 = await _fetchone("SELECT COALESCE(SUM(amount), 0) FROM debt_ledger WHERE month = ? AND transaction_type = 'repayment'", month)
+    repayments_total = float(row2[0]) if row2 else 0.0
+    
+    # repayments_total is negative (e.g. -15.0). Adding it to receipt_total reduces the spent amount.
+    return receipt_total + repayments_total
 
 # ─── Receipts ─────────────────────────────────────────────────────────────────
 
@@ -278,10 +292,11 @@ async def save_receipt(
     report_text: str,
     month: str,
     receipt_hash: str = "",
+    comment: str = "",
 ) -> int:
     return await _execute_returning_id(
-        "INSERT INTO receipts (date, store, total_amount, photo_file_id, report_text, month, receipt_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        date, store, total_amount, photo_file_id, report_text, month, receipt_hash,
+        "INSERT INTO receipts (date, store, total_amount, photo_file_id, report_text, month, receipt_hash, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        date, store, total_amount, photo_file_id, report_text, month, receipt_hash, comment,
     )
 
 async def save_receipt_items(receipt_id: int, items: list[dict]) -> None:
